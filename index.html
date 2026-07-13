@@ -99,8 +99,8 @@
     <div class="tab" data-view="dashboard">Dash</div>
     <div class="tab" data-view="exercises">Exercises</div>
     <div class="tab" data-view="bodyweight">Weight</div>
-    <div class="tab" data-view="plan">Plan</div>
     <div class="tab" data-view="run">Run</div>
+    <div class="tab" data-view="plan">Plan</div>
   </div>
 
   <!-- LOG -->
@@ -112,12 +112,18 @@
       </div>
       <div>
         <label>Session type</label>
-        <input list="sessionTypes" id="logType" placeholder="Push / Pull / Legs...">
-        <datalist id="sessionTypes">
-          <option value="Push"><option value="Pull"><option value="Legs">
-          <option value="Upper"><option value="Lower"><option value="Run">
-          <option value="Full Body"><option value="Abs">
-        </datalist>
+        <select id="logType">
+          <option value="">Select type…</option>
+          <option>Push</option>
+          <option>Pull</option>
+          <option>Legs</option>
+          <option>Upper</option>
+          <option>Lower</option>
+          <option>Full Body</option>
+          <option>Abs</option>
+          <option>Run</option>
+          <option>Other</option>
+        </select>
       </div>
     </div>
     <div class="row">
@@ -633,12 +639,23 @@ function saveSessionRecord(date, type, location, exercises, existingId){
   return prHits;
 }
 
+function setLogType(value){
+  const sel = document.getElementById('logType');
+  const v = value || '';
+  if(v && ![...sel.options].some(o=> o.value===v)){
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = v;
+    sel.appendChild(opt);
+  }
+  sel.value = v;
+}
+
 function startEditSession(id){
   const session = store.sessions.find(s=> s.id===id);
   if(!session) return;
   editingSessionId = id;
   document.getElementById('logDate').value = session.date;
-  document.getElementById('logType').value = session.type || '';
+  setLogType(session.type || '');
   document.getElementById('logLocation').value = session.location==='Unspecified' ? '' : (session.location||'');
   document.getElementById('logInput').value = '';
   document.getElementById('saveBtn').textContent = 'Update Session';
@@ -1377,7 +1394,7 @@ function renderTodaysPlanCard(){
   };
   const btn = document.getElementById('prefillBtn');
   if(btn) btn.onclick = ()=>{
-    document.getElementById('logType').value = day.type||'';
+    setLogType(day.type||'');
     document.getElementById('logInput').value = (day.exercises||[]).join('\n');
     toast('Prefilled — fill in your numbers');
   };
