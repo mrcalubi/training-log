@@ -45,8 +45,8 @@
   label{display:block;font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;}
   input,select,textarea{width:100%;background:var(--surface);border:1px solid var(--line);color:var(--chalk);border-radius:6px;padding:10px 11px;font-family:'IBM Plex Sans',sans-serif;font-size:14.5px;}
   textarea{font-family:'IBM Plex Mono',monospace;font-size:13.5px;min-height:120px;resize:vertical;line-height:1.6;}
-  .row{display:flex;gap:10px;margin-bottom:14px;}
-  .row > div{flex:1;}
+  .row{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap;}
+  .row > div{flex:1 1 140px;min-width:0;}
 
   button{font-family:'IBM Plex Mono',monospace;font-size:12.5px;letter-spacing:.03em;text-transform:uppercase;border:none;border-radius:6px;padding:11px 16px;cursor:pointer;}
   .btn-primary{background:var(--iron);color:var(--chalk);width:100%;}
@@ -131,6 +131,10 @@
       <div style="height:8px"></div>
       <button class="btn-primary" id="workoutFinishBtn">Finish &amp; Save Workout</button>
       <button class="btn-ghost btn-small" id="workoutCancelBtn" style="margin-top:8px;">Cancel</button>
+    </div>
+    <div id="editBanner" style="display:none;align-items:center;justify-content:space-between;background:var(--surface-2);border:1px solid var(--gold);border-radius:6px;padding:10px 12px;margin-bottom:14px;">
+      <span id="editBannerText" style="font-size:12.5px;color:var(--gold);"></span>
+      <button class="btn-ghost btn-small" id="cancelEditBtn">Cancel Edit</button>
     </div>
     <label>Paste your shorthand</label>
     <textarea id="logInput" placeholder="incline bench 25x10x4&#10;face pulls 90x15x3&#10;tricep ext 60x15x2 60x10 (struggled last set)"></textarea>
@@ -348,7 +352,18 @@ function toast(msg){
   setTimeout(()=>t.classList.remove('show'), 1600);
 }
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
-function todayISO(){ return new Date().toISOString().slice(0,10); }
+// Local-calendar-date helpers. Singapore is UTC+8, so Date.toISOString() (which is
+// always UTC) returns the WRONG calendar date between 00:00-08:00 local time every day.
+// These use the device's local timezone instead, which is what a training log should track by.
+function localDateStr(d){
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function parseLocalDate(str){
+  const [y,m,d] = str.split('-').map(Number);
+  return new Date(y, m-1, d); // local midnight, not UTC midnight
+}
+function todayISO(){ return localDateStr(new Date()); }
 
 /* ---------- exercise name normalization / aliases ---------- */
 // Collapses spelling variants (plurals, hyphens, case) automatically.
@@ -473,6 +488,7 @@ document.getElementById('parseBtn').onclick = ()=>{
 };
 
 let currentPreview = [];
+let editingSessionId = null;
 
 function renderPreview(exercises){
   currentPreview = exercises;
@@ -581,8 +597,10 @@ function renderPreview(exercises){
   });
 }
 
-function saveSessionRecord(date, type, location, exercises){
-  const newSession = { id: uid(), date, type, location, exercises };
+function saveSessionRecord(date, type, location, exercises, existingId){
+  const id = existingId || uid();
+  // if editing, drop the old version first so PR comparison doesn't compare this session against itself
+  store.sessions = store.sessions.filter(s=> s.id !== id);
 
   const priorByEx = bestSetsByExercise();
   const bw = latestBodyweight();
@@ -599,7 +617,7 @@ function saveSessionRecord(date, type, location, exercises){
   });
 
   const sessions = store.sessions;
-  sessions.push(newSession);
+  sessions.push({ id, date, type, location, exercises });
   store.sessions = sessions;
   refreshLocationDatalist();
   renderDashboard();
@@ -608,18 +626,47 @@ function saveSessionRecord(date, type, location, exercises){
     const top = prHits[0];
     toast(`🔥 New PR — ${top.name} ${top.weight}${top.weight?'kg':''} × ${top.reps}`);
   } else {
-    toast('Session saved');
+    toast(existingId ? 'Session updated' : 'Session saved');
   }
   return prHits;
 }
+
+function startEditSession(id){
+  const session = store.sessions.find(s=> s.id===id);
+  if(!session) return;
+  editingSessionId = id;
+  document.getElementById('logDate').value = session.date;
+  document.getElementById('logType').value = session.type || '';
+  document.getElementById('logLocation').value = session.location==='Unspecified' ? '' : (session.location||'');
+  document.getElementById('logInput').value = '';
+  document.getElementById('saveBtn').textContent = 'Update Session';
+  document.getElementById('editBanner').style.display = 'flex';
+  document.getElementById('editBannerText').textContent = `Editing session from ${session.date}`;
+  renderPreview(JSON.parse(JSON.stringify(session.exercises)));
+  // jump to the Log tab
+  document.querySelectorAll('.tab').forEach(t=> t.classList.remove('active'));
+  document.querySelectorAll('.view').forEach(v=> v.classList.remove('active'));
+  document.querySelector('.tab[data-view="log"]').classList.add('active');
+  document.getElementById('view-log').classList.add('active');
+  window.scrollTo(0,0);
+}
+function cancelEditSession(){
+  editingSessionId = null;
+  document.getElementById('saveBtn').textContent = 'Save Session';
+  document.getElementById('editBanner').style.display = 'none';
+  document.getElementById('previewWrap').style.display = 'none';
+  document.getElementById('logInput').value = '';
+}
+document.getElementById('cancelEditBtn').onclick = cancelEditSession;
 
 document.getElementById('saveBtn').onclick = ()=>{
   const date = document.getElementById('logDate').value || todayISO();
   const type = document.getElementById('logType').value || 'Other';
   const location = document.getElementById('logLocation').value.trim() || 'Unspecified';
-  saveSessionRecord(date, type, location, currentPreview);
+  saveSessionRecord(date, type, location, currentPreview, editingSessionId);
   document.getElementById('logInput').value = '';
   document.getElementById('previewWrap').style.display = 'none';
+  cancelEditSession();
 };
 
 /* ---------- helpers ---------- */
@@ -632,7 +679,12 @@ function pillClass(type){
   return 'pill-other';
 }
 function epley1RM(weight, reps){ return weight * (1 + reps/30); }
-function daysAgo(dateStr){ return (Date.now() - new Date(dateStr).getTime()) / 86400000; }
+function daysAgo(dateStr){
+  const d = parseLocalDate(dateStr);
+  const now = new Date();
+  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return Math.round((todayMid - d) / 86400000);
+}
 
 /* ---------- next-session suggestion ----------
    Simple double-progression heuristic, not a real coaching algorithm:
@@ -752,8 +804,9 @@ function renderDashboard(){
     [...sessions].sort((a,b)=> new Date(b.date)-new Date(a.date)).slice(0,10).map(s=>`
       <div class="card"><div class="card-head">
         <div class="card-title">${s.date}</div>
-        <div style="display:flex;align-items:center;gap:8px">
+        <div style="display:flex;align-items:center;gap:10px">
           <span class="pill ${pillClass(s.type)}">${s.type}</span>
+          <span class="edit-session-btn" data-id="${s.id}" style="font-size:12px;color:var(--track);cursor:pointer;">Edit</span>
           <span class="del-row del-session-btn" data-id="${s.id}" style="font-size:15px">&times;</span>
         </div>
       </div><div class="card-sub">${s.exercises.map(e=>e.name).join(', ')}</div>
@@ -767,6 +820,9 @@ function renderDashboard(){
       renderDashboard();
       toast('Session deleted');
     });
+  });
+  document.querySelectorAll('.edit-session-btn').forEach(btn=>{
+    btn.addEventListener('click', e=> startEditSession(e.target.dataset.id));
   });
 }
 
@@ -794,6 +850,10 @@ function parseDurationToSec(str){
   if(parts.length===1) return parts[0]*60; // bare number treated as minutes
   return null;
 }
+function formatDurationInput(sec){
+  const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = Math.round(sec%60);
+  return h>0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+}
 function formatPace(secPerKm){
   if(secPerKm==null || !isFinite(secPerKm) || secPerKm<=0) return '—';
   const m = Math.floor(secPerKm/60), s = Math.round(secPerKm%60);
@@ -812,12 +872,13 @@ function overallAvgPace(runs){
 function weeklyMileageBuckets(weeksCount=10){
   const runs = store.runs;
   const now = new Date();
+  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const buckets = [];
   for(let w=weeksCount-1; w>=0; w--){
-    const end = new Date(now); end.setDate(end.getDate() - w*7);
+    const end = new Date(todayMid); end.setDate(end.getDate() - w*7);
     const start = new Date(end); start.setDate(start.getDate()-6);
-    const km = runs.filter(r=>{ const d=new Date(r.date); return d>=start && d<=end; }).reduce((s,r)=>s+r.distanceKm,0);
-    buckets.push({ label: `${start.toISOString().slice(5,10)}–${end.toISOString().slice(5,10)}`, km });
+    const km = runs.filter(r=>{ const d=parseLocalDate(r.date); return d>=start && d<=end; }).reduce((s,r)=>s+r.distanceKm,0);
+    buckets.push({ label: `${localDateStr(start).slice(5)}–${localDateStr(end).slice(5)}`, km });
   }
   return buckets;
 }
@@ -873,10 +934,11 @@ document.getElementById('runAddBtn').onclick = ()=>{
 function renderRunTab(){
   const runs = [...store.runs].sort((a,b)=> new Date(a.date)-new Date(b.date));
   const now = new Date();
-  const weekAgo = new Date(now); weekAgo.setDate(weekAgo.getDate()-7);
-  const monthAgo = new Date(now); monthAgo.setDate(monthAgo.getDate()-30);
-  const thisWeekKm = runs.filter(r=> new Date(r.date)>=weekAgo).reduce((s,r)=>s+r.distanceKm,0);
-  const thisMonthKm = runs.filter(r=> new Date(r.date)>=monthAgo).reduce((s,r)=>s+r.distanceKm,0);
+  const todayMid = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const weekAgo = new Date(todayMid); weekAgo.setDate(weekAgo.getDate()-7);
+  const monthAgo = new Date(todayMid); monthAgo.setDate(monthAgo.getDate()-30);
+  const thisWeekKm = runs.filter(r=> parseLocalDate(r.date)>=weekAgo).reduce((s,r)=>s+r.distanceKm,0);
+  const thisMonthKm = runs.filter(r=> parseLocalDate(r.date)>=monthAgo).reduce((s,r)=>s+r.distanceKm,0);
   const avgPace = overallAvgPace(runs);
 
   document.getElementById('runStatRow').innerHTML = `
@@ -891,7 +953,10 @@ function renderRunTab(){
     return `
       <div class="card"><div class="card-head">
         <div class="card-title">${r.distanceKm}km · ${formatPace(pace)} · ${formatKmh(pace)}</div>
-        <span class="del-row del-run-btn" data-id="${r.id}" style="font-size:15px">&times;</span>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="edit-run-btn" data-id="${r.id}" style="font-size:12px;color:var(--track);cursor:pointer;">Edit</span>
+          <span class="del-row del-run-btn" data-id="${r.id}" style="font-size:15px">&times;</span>
+        </div>
       </div><div class="card-sub">${r.date} · ${r.type}${r.notes?' · '+r.notes:''}</div></div>
     `;
   }).join('') : `<div class="empty">No runs logged yet.</div>`;
@@ -899,6 +964,18 @@ function renderRunTab(){
   document.querySelectorAll('.del-run-btn').forEach(b=> b.addEventListener('click', e=>{
     store.runs = store.runs.filter(r=> r.id !== e.target.dataset.id);
     renderRunTab();
+  }));
+  document.querySelectorAll('.edit-run-btn').forEach(b=> b.addEventListener('click', e=>{
+    const r = store.runs.find(x=> x.id === e.target.dataset.id);
+    if(!r) return;
+    document.getElementById('runDate').value = r.date;
+    document.getElementById('runDistance').value = r.distanceKm;
+    document.getElementById('runDuration').value = formatDurationInput(r.durationSec);
+    document.getElementById('runType').value = r.type;
+    document.getElementById('runNotes').value = r.notes || '';
+    store.runs = store.runs.filter(x=> x.id !== r.id);
+    renderRunTab();
+    toast('Loaded for editing — Add Run to save changes');
   }));
 }
 
@@ -1051,20 +1128,48 @@ document.getElementById('bwSaveBtn').onclick = ()=>{
   const weight = parseFloat(document.getElementById('bwWeight').value);
   if(!weight){ toast('Enter a weight'); return; }
   const bw = store.bodyweight;
-  bw.push({date, weight});
+  bw.push({id: uid(), date, weight});
   store.bodyweight = bw;
   document.getElementById('bwWeight').value = '';
   toast('Added');
   renderBodyweight();
 };
 function renderBodyweight(){
-  const bw = [...store.bodyweight].sort((a,b)=> new Date(a.date)-new Date(b.date));
+  // lazy-migrate any older entries saved before ids were added
+  let bwRaw = store.bodyweight;
+  let migrated = false;
+  bwRaw.forEach(b=>{ if(!b.id){ b.id = uid(); migrated = true; } });
+  if(migrated) store.bodyweight = bwRaw;
+
+  const bw = [...bwRaw].sort((a,b)=> new Date(a.date)-new Date(b.date));
   document.getElementById('bwChart').innerHTML = bw.length >= 2 ?
     sparklineSVG(bw.map(b=>({date:b.date, est1rm:b.weight, weight:b.weight, reps:''}))) :
     `<div class="empty">Log a couple of entries to see a trend.</div>`;
   document.getElementById('bwList').innerHTML = [...bw].reverse().slice(0,20).map(b=>`
-    <div class="card"><div class="card-head"><div class="card-title">${b.weight}kg</div><div class="card-sub">${b.date}</div></div></div>
+    <div class="card"><div class="card-head">
+      <div class="card-title">${b.weight}kg</div>
+      <div style="display:flex;align-items:center;gap:10px;">
+        <span class="card-sub">${b.date}</span>
+        <span class="edit-bw-btn" data-id="${b.id}" style="font-size:12px;color:var(--track);cursor:pointer;">Edit</span>
+        <span class="del-row del-bw-btn" data-id="${b.id}" style="font-size:15px">&times;</span>
+      </div>
+    </div></div>
   `).join('') || `<div class="empty">No entries yet.</div>`;
+
+  document.querySelectorAll('.del-bw-btn').forEach(btn=> btn.addEventListener('click', e=>{
+    store.bodyweight = store.bodyweight.filter(x=> x.id !== e.target.dataset.id);
+    renderBodyweight();
+    toast('Deleted');
+  }));
+  document.querySelectorAll('.edit-bw-btn').forEach(btn=> btn.addEventListener('click', e=>{
+    const entry = store.bodyweight.find(x=> x.id === e.target.dataset.id);
+    if(!entry) return;
+    document.getElementById('bwDate').value = entry.date;
+    document.getElementById('bwWeight').value = entry.weight;
+    store.bodyweight = store.bodyweight.filter(x=> x.id !== entry.id);
+    renderBodyweight();
+    toast('Loaded for editing — Add Entry to save changes');
+  }));
 }
 
 /* ---------- PLAN (blocks) ---------- */
@@ -1073,7 +1178,7 @@ const DOW_LABELS = {sun:'Sunday', mon:'Monday', tue:'Tuesday', wed:'Wednesday', 
 const DOW_ORDER = ['mon','tue','wed','thu','fri','sat','sun'];
 
 function blockDateRange(block){
-  const start = new Date(block.startDate);
+  const start = parseLocalDate(block.startDate);
   const end = new Date(start); end.setDate(end.getDate() + block.weeks.length*7);
   return { start, end };
 }
@@ -1118,7 +1223,7 @@ function renderPlanBlockList(){
           <div class="card-title">${block.name||'Untitled Plan'}</div>
           ${statusLabel}
         </div>
-        <div class="card-sub">${block.startDate} → ${endDisplay.toISOString().slice(0,10)} · ${block.weeks.length} weeks</div>
+        <div class="card-sub">${block.startDate} → ${localDateStr(endDisplay)} · ${block.weeks.length} weeks</div>
         <div style="margin-top:8px;display:flex;gap:6px;">
           <button class="btn-ghost btn-small edit-block-btn" data-id="${block.id}">Edit</button>
           <button class="btn-ghost btn-small del-block-btn" data-id="${block.id}" style="color:var(--danger)">Delete</button>
@@ -1142,7 +1247,7 @@ document.getElementById('newBlockBtn').onclick = ()=>{
   const form = document.getElementById('newBlockForm');
   form.style.display = form.style.display==='block' ? 'none' : 'block';
   const recentEnd = [...store.planBlocks].sort((a,b)=> new Date(blockDateRange(b).end)-new Date(blockDateRange(a).end))[0];
-  document.getElementById('nbStart').value = recentEnd ? blockDateRange(recentEnd).end.toISOString().slice(0,10) : todayISO();
+  document.getElementById('nbStart').value = recentEnd ? localDateStr(blockDateRange(recentEnd).end) : todayISO();
   document.getElementById('nbName').value = '';
 };
 document.getElementById('nbCancelBtn').onclick = ()=>{ document.getElementById('newBlockForm').style.display = 'none'; };
@@ -1175,7 +1280,7 @@ function renderBlockEditor(blockId){
   const block = blocks.find(b=> b.id===blockId);
   const el = document.getElementById('planEditor');
   if(!block){ el.innerHTML=''; return; }
-  el.innerHTML = `<div class="section-title">Editing: ${block.name}</div>` +
+  el.innerHTML = `<div class="section-title">Editing: ${block.name} <span id="closeEditorBtn" style="color:var(--muted);font-weight:400;cursor:pointer;">Close ✕</span></div>` +
     block.weeks.map((week, wIdx)=>{
       return `
         <div class="section-title week-toggle" data-week="${wIdx}">
@@ -1222,10 +1327,12 @@ function renderBlockEditor(blockId){
       });
     });
     store.planBlocks = blocks.map(b=> b.id===block.id ? block : b);
+    document.getElementById('planEditor').innerHTML = ''; // close the editor — it was staying open after save, looking "stuck"
     toast('Block saved');
     renderPlanBlockList();
     renderTodaysPlanCard();
   };
+  document.getElementById('closeEditorBtn').onclick = ()=>{ el.innerHTML = ''; };
 }
 
 function renderTodaysPlanCard(){
@@ -1236,7 +1343,7 @@ function renderTodaysPlanCard(){
     if(ended){
       el.innerHTML = `
         <div class="card" style="margin-bottom:16px;border-color:#c9a22755;">
-          <div class="card-title">"${ended.name}" ended ${blockDateRange(ended).end.toISOString().slice(0,10)}</div>
+          <div class="card-title">"${ended.name}" ended ${localDateStr(blockDateRange(ended).end)}</div>
           <div class="card-sub">No active plan right now — add your next block on the Plan tab whenever you're ready.</div>
         </div>
       `;
@@ -1374,9 +1481,9 @@ function currentStreak(){
   const dates = trainedDatesSet();
   let d = new Date();
   // if nothing logged today yet, start counting from yesterday so streak isn't punished mid-day
-  if(!dates.has(d.toISOString().slice(0,10))) d.setDate(d.getDate()-1);
+  if(!dates.has(localDateStr(d))) d.setDate(d.getDate()-1);
   let streak = 0;
-  while(dates.has(d.toISOString().slice(0,10))){
+  while(dates.has(localDateStr(d))){
     streak++;
     d.setDate(d.getDate()-1);
   }
@@ -1391,7 +1498,7 @@ function renderHeatmap(){
   start.setDate(start.getDate() - (weeks*7 - 1));
   for(let i=0;i<weeks*7;i++){
     const d = new Date(start); d.setDate(start.getDate()+i);
-    const ds = d.toISOString().slice(0,10);
+    const ds = localDateStr(d);
     days.push({ date: ds, on: dates.has(ds), today: ds===todayStr });
   }
   let html = '<div class="heatmap">';
@@ -1411,7 +1518,7 @@ function monthlyVolume(monthOffset){
   const target = new Date(now.getFullYear(), now.getMonth()+monthOffset, 1);
   let totalSets = 0;
   store.sessions.forEach(s=>{
-    const d = new Date(s.date);
+    const d = parseLocalDate(s.date);
     if(d.getFullYear()===target.getFullYear() && d.getMonth()===target.getMonth()){
       s.exercises.forEach(ex=> totalSets += ex.sets.length);
     }
