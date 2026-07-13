@@ -18,8 +18,8 @@
   }
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0;background:var(--bg);color:var(--chalk);font-family:'IBM Plex Sans',sans-serif;}
-  body{padding-bottom:70px;}
-  .wrap{max-width:720px;margin:0 auto;padding:18px 14px 40px;}
+  body{padding-bottom:calc(70px + env(safe-area-inset-bottom, 0px));}
+  .wrap{max-width:720px;margin:0 auto;padding:calc(18px + env(safe-area-inset-top, 0px)) 14px 40px;}
   h1{font-family:'Bebas Neue',sans-serif;font-size:34px;letter-spacing:.02em;margin:2px 0 0;}
   .eyebrow{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;}
 
