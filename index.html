@@ -89,6 +89,16 @@
   .pr-recent{color:var(--gold);font-family:'IBM Plex Mono',monospace;}
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--chalk);color:var(--bg);padding:10px 18px;border-radius:20px;font-size:13px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;}
   .toast.show{opacity:1;}
+
+  .mode-toggle{display:inline-flex;background:var(--surface-2);border-radius:20px;padding:3px;margin-bottom:14px;gap:2px;}
+  .mode-opt{font-family:'IBM Plex Mono',monospace;font-size:11px;letter-spacing:.04em;text-transform:uppercase;padding:7px 14px;border-radius:16px;border:none;background:transparent;color:var(--muted);cursor:pointer;}
+  .mode-opt.active{background:var(--surface-3);color:var(--chalk);}
+  .leg-row{background:var(--surface-2);border:1px solid var(--line);border-radius:8px;padding:12px;margin-bottom:10px;}
+  .leg-row-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;}
+  .leg-checks{display:flex;flex-wrap:wrap;gap:12px;margin-top:8px;}
+  .leg-checks label{display:inline-flex;align-items:center;gap:6px;margin:0;text-transform:none;font-size:12px;letter-spacing:0;cursor:pointer;}
+  .leg-actions{display:flex;flex-wrap:wrap;gap:8px;margin:4px 0 12px;}
+  .interval-summary{font-family:'IBM Plex Mono',monospace;font-size:12px;color:var(--muted);margin:8px 0 14px;line-height:1.5;}
 </style>
 </head>
 <body>
@@ -255,20 +265,49 @@
   <div class="view" id="view-run">
     <div class="card">
       <div class="card-title" style="margin-bottom:10px;">Log a Run</div>
-      <div class="row">
-        <div><label>Date</label><input type="date" id="runDate"></div>
-        <div><label>Distance (km)</label><input type="number" step="0.01" id="runDistance" placeholder="5"></div>
+      <div class="mode-toggle" id="runModeToggle">
+        <button type="button" class="mode-opt active" data-mode="simple">Simple</button>
+        <button type="button" class="mode-opt" data-mode="intervals">Intervals</button>
       </div>
-      <div class="row">
-        <div><label>Duration (mm:ss)</label><input id="runDuration" placeholder="27:20"></div>
-        <div><label>Type</label><input list="runTypes" id="runType" placeholder="Easy / Long / Interval">
-          <datalist id="runTypes"><option value="Easy"><option value="Long"><option value="Interval"><option value="Race"><option value="Recovery"></datalist>
+
+      <div id="runSimpleForm">
+        <div class="row">
+          <div><label>Date</label><input type="date" id="runDate"></div>
+          <div><label>Distance (km)</label><input type="number" step="0.01" id="runDistance" placeholder="5"></div>
         </div>
+        <div class="row">
+          <div><label>Duration (mm:ss)</label><input id="runDuration" placeholder="27:20"></div>
+          <div><label>Type</label><input list="runTypes" id="runType" placeholder="Easy / Long / Interval">
+            <datalist id="runTypes"><option value="Easy"><option value="Long"><option value="Interval"><option value="Race"><option value="Recovery"></datalist>
+          </div>
+        </div>
+        <label>Notes</label>
+        <input id="runNotes" placeholder="optional">
+        <div style="height:10px"></div>
+        <button class="btn-primary" id="runAddBtn">Add Run</button>
       </div>
-      <label>Notes</label>
-      <input id="runNotes" placeholder="optional">
-      <div style="height:10px"></div>
-      <button class="btn-primary" id="runAddBtn">Add Run</button>
+
+      <div id="runIntervalForm" style="display:none;">
+        <div class="row">
+          <div><label>Date</label><input type="date" id="ivDate"></div>
+          <div>
+            <label>Workout name</label>
+            <input id="ivWorkoutName" list="workoutNames" placeholder="e.g. Treadmill 1.5/2 intervals">
+            <datalist id="workoutNames"></datalist>
+          </div>
+        </div>
+        <label>Notes</label>
+        <input id="ivNotes" placeholder="optional">
+        <div style="height:10px"></div>
+        <div class="leg-actions">
+          <button type="button" class="btn-ghost btn-small" id="addLegBtn">+ Add Leg</button>
+          <button type="button" class="btn-ghost btn-small" id="addWarmupBtn">+ Warmup</button>
+          <button type="button" class="btn-ghost btn-small" id="addCooldownBtn">+ Cooldown</button>
+        </div>
+        <div id="legList"></div>
+        <div class="interval-summary" id="intervalLiveSummary"></div>
+        <button class="btn-primary" id="ivSaveBtn">Save Interval Run</button>
+      </div>
     </div>
 
     <div class="stat-row" id="runStatRow" style="margin-top:16px;"></div>
@@ -276,6 +315,10 @@
     <div id="runMileageChart"></div>
     <div class="section-title">Pace Trend</div>
     <div id="runPaceChart"></div>
+    <div class="section-title">Interval Workout Comparison</div>
+    <select id="intervalWorkoutSelect" style="margin-bottom:10px;"></select>
+    <div id="intervalCompareChart"></div>
+    <div id="intervalCompareTable"></div>
     <div class="section-title">Recent Runs</div>
     <div id="runList"></div>
   </div>
@@ -872,6 +915,7 @@ function parseDurationToSec(str){
   return null;
 }
 function formatDurationInput(sec){
+  if(!sec) return '';
   const h = Math.floor(sec/3600), m = Math.floor((sec%3600)/60), s = Math.round(sec%60);
   return h>0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
 }
@@ -934,7 +978,219 @@ function paceTrendSVG(runsSorted, w=640, h=120){
   </svg><div class="card-sub" style="margin-top:4px;">Higher on the chart = faster pace</div>`;
 }
 
+/* ---------- interval leg math ---------- */
+function legSpeedKmh(leg){
+  if(leg.speedKmh) return leg.speedKmh;
+  if(leg.distanceKm && leg.durationSec) return leg.distanceKm / (leg.durationSec/3600);
+  return 0;
+}
+function legDistanceKm(leg){
+  if(leg.distanceKm) return leg.distanceKm;
+  if(leg.speedKmh && leg.durationSec) return leg.speedKmh * (leg.durationSec/3600);
+  return 0;
+}
+function legsTotals(legs){
+  let distanceKm = 0, durationSec = 0;
+  legs.forEach(l=>{
+    const n = l.repeatCount || 1;
+    distanceKm += legDistanceKm(l) * n;
+    durationSec += (l.durationSec||0) * n;
+  });
+  return { distanceKm, durationSec };
+}
+function intervalSummary(run){
+  const workLegs = run.legs.filter(l=> l.isWork && !l.excludeFromStats);
+  const restLegs = run.legs.filter(l=> !l.isWork && !l.excludeFromStats);
+  const avg = legs => legs.length ? legs.reduce((s,l)=> s+legSpeedKmh(l), 0)/legs.length : null;
+  return {
+    avgWorkSpeed: avg(workLegs),
+    avgRestSpeed: avg(restLegs),
+    totalRounds: workLegs.reduce((max,l)=> Math.max(max, l.repeatCount||1), 0),
+    workDurationSec: workLegs.reduce((s,l)=> s+(l.durationSec||0)*(l.repeatCount||1), 0)
+  };
+}
+function defaultIntervalLegs(){
+  return [
+    { label:'On', durationSec:0, speedKmh:0, distanceKm:0, repeatCount:6, isWork:true, excludeFromStats:false },
+    { label:'Off', durationSec:0, speedKmh:0, distanceKm:0, repeatCount:6, isWork:false, excludeFromStats:false }
+  ];
+}
+function blankLeg(){
+  return { label:'', durationSec:0, speedKmh:0, distanceKm:0, repeatCount:1, isWork:false, excludeFromStats:false };
+}
+function isValidLeg(l){
+  return (l.durationSec||0) > 0 && (!!l.speedKmh || !!l.distanceKm);
+}
+function formatSpeedNum(v){ return v ? String(v) : ''; }
+function formatDistNum(v){ return v ? String(v) : ''; }
+
+let runMode = 'simple';
+let draftLegs = [];
+
+function setRunMode(mode){
+  runMode = mode;
+  document.querySelectorAll('#runModeToggle .mode-opt').forEach(b=>{
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  document.getElementById('runSimpleForm').style.display = mode==='simple' ? '' : 'none';
+  document.getElementById('runIntervalForm').style.display = mode==='intervals' ? '' : 'none';
+  if(mode==='intervals' && draftLegs.length===0){
+    draftLegs = defaultIntervalLegs();
+    renderLegBuilder();
+  }
+  if(mode==='intervals') updateIntervalLiveSummary();
+}
+document.querySelectorAll('#runModeToggle .mode-opt').forEach(btn=>{
+  btn.addEventListener('click', ()=> setRunMode(btn.dataset.mode));
+});
+
+function refreshWorkoutNameDatalist(){
+  const names = [...new Set(store.runs.filter(r=> r.legs && r.workoutName).map(r=> r.workoutName))].sort();
+  document.getElementById('workoutNames').innerHTML = names.map(n=>`<option value="${n}">`).join('');
+}
+
+function renderLegBuilder(){
+  const list = document.getElementById('legList');
+  list.innerHTML = draftLegs.map((l,i)=>`
+    <div class="leg-row" data-i="${i}">
+      <div class="leg-row-head">
+        <span class="card-sub">Leg ${i+1}</span>
+        <span class="del-row del-leg-btn" data-i="${i}" title="Remove">&times;</span>
+      </div>
+      <div class="row">
+        <div><label>Label</label><input data-field="label" data-i="${i}" value="${l.label||''}" placeholder="On / Off / Warmup"></div>
+        <div><label>Duration (mm:ss)</label><input data-field="duration" data-i="${i}" value="${formatDurationInput(l.durationSec)}" placeholder="1:30"></div>
+      </div>
+      <div class="row">
+        <div><label>Speed (km/h)</label><input type="number" step="0.1" data-field="speed" data-i="${i}" value="${formatSpeedNum(l.speedKmh)}" placeholder="14"></div>
+        <div><label>Distance (km)</label><input type="number" step="0.01" data-field="distance" data-i="${i}" value="${formatDistNum(l.distanceKm)}" placeholder="or enter distance"></div>
+      </div>
+      <div class="row">
+        <div><label>Repeat count</label><input type="number" min="1" data-field="repeat" data-i="${i}" value="${l.repeatCount||1}"></div>
+        <div></div>
+      </div>
+      <div class="leg-checks">
+        <label><input type="checkbox" data-field="isWork" data-i="${i}" ${l.isWork?'checked':''}> Is Work Interval</label>
+        <label><input type="checkbox" data-field="exclude" data-i="${i}" ${l.excludeFromStats?'checked':''}> Exclude from pace stats</label>
+      </div>
+    </div>
+  `).join('') || `<div class="empty">No legs yet — add one below.</div>`;
+
+  list.querySelectorAll('input').forEach(el=>{
+    const handler = ()=>{
+      const i = +el.dataset.i;
+      const field = el.dataset.field;
+      const row = list.querySelector(`.leg-row[data-i="${i}"]`);
+      if(field==='label') draftLegs[i].label = el.value;
+      else if(field==='duration') draftLegs[i].durationSec = parseDurationToSec(el.value) || 0;
+      else if(field==='speed'){
+        const v = parseFloat(el.value); draftLegs[i].speedKmh = v||0;
+        if(v){
+          draftLegs[i].distanceKm = 0;
+          const distEl = row && row.querySelector('input[data-field="distance"]');
+          if(distEl && distEl.value) distEl.value = '';
+        }
+      }
+      else if(field==='distance'){
+        const v = parseFloat(el.value); draftLegs[i].distanceKm = v||0;
+        if(v){
+          draftLegs[i].speedKmh = 0;
+          const speedEl = row && row.querySelector('input[data-field="speed"]');
+          if(speedEl && speedEl.value) speedEl.value = '';
+        }
+      }
+      else if(field==='repeat') draftLegs[i].repeatCount = Math.max(1, parseInt(el.value,10)||1);
+      else if(field==='isWork') draftLegs[i].isWork = el.checked;
+      else if(field==='exclude') draftLegs[i].excludeFromStats = el.checked;
+      updateIntervalLiveSummary();
+    };
+    el.addEventListener('input', handler);
+    el.addEventListener('change', handler);
+  });
+  list.querySelectorAll('.del-leg-btn').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      draftLegs.splice(+btn.dataset.i, 1);
+      renderLegBuilder();
+      updateIntervalLiveSummary();
+    });
+  });
+  updateIntervalLiveSummary();
+}
+
+function updateIntervalLiveSummary(){
+  const el = document.getElementById('intervalLiveSummary');
+  if(!draftLegs.length){ el.textContent = ''; return; }
+  const totals = legsTotals(draftLegs);
+  const sum = intervalSummary({ legs: draftLegs });
+  const pace = sum.avgWorkSpeed ? `${sum.avgWorkSpeed.toFixed(1)} km/h work` : '— work';
+  el.textContent = `Total ${totals.distanceKm.toFixed(2)} km · ${formatDurationInput(totals.durationSec)||'0:00'} · ${pace} · ${sum.totalRounds||0} rounds`;
+}
+
+document.getElementById('addLegBtn').onclick = ()=>{
+  draftLegs.push(blankLeg());
+  renderLegBuilder();
+};
+document.getElementById('addWarmupBtn').onclick = ()=>{
+  draftLegs.unshift({ label:'Warmup', durationSec:0, speedKmh:0, distanceKm:0, repeatCount:1, isWork:false, excludeFromStats:true });
+  renderLegBuilder();
+};
+document.getElementById('addCooldownBtn').onclick = ()=>{
+  draftLegs.push({ label:'Cooldown', durationSec:0, speedKmh:0, distanceKm:0, repeatCount:1, isWork:false, excludeFromStats:true });
+  renderLegBuilder();
+};
+
+function resetIntervalForm(){
+  document.getElementById('ivDate').value = todayISO();
+  document.getElementById('ivWorkoutName').value = '';
+  document.getElementById('ivNotes').value = '';
+  draftLegs = defaultIntervalLegs();
+  renderLegBuilder();
+}
+
+document.getElementById('ivSaveBtn').onclick = ()=>{
+  const date = document.getElementById('ivDate').value || todayISO();
+  const workoutName = document.getElementById('ivWorkoutName').value.trim();
+  const notes = document.getElementById('ivNotes').value.trim();
+  // snapshot fields from DOM in case last keystroke hasn't committed
+  document.querySelectorAll('#legList .leg-row').forEach(row=>{
+    const i = +row.dataset.i; if(isNaN(i) || !draftLegs[i]) return;
+    const get = f => row.querySelector(`[data-field="${f}"]`);
+    draftLegs[i].label = get('label').value;
+    draftLegs[i].durationSec = parseDurationToSec(get('duration').value) || 0;
+    const speed = parseFloat(get('speed').value) || 0;
+    const dist = parseFloat(get('distance').value) || 0;
+    // if both filled, prefer speed (treadmill case)
+    if(speed){ draftLegs[i].speedKmh = speed; draftLegs[i].distanceKm = 0; }
+    else { draftLegs[i].speedKmh = 0; draftLegs[i].distanceKm = dist; }
+    draftLegs[i].repeatCount = Math.max(1, parseInt(get('repeat').value,10)||1);
+    draftLegs[i].isWork = get('isWork').checked;
+    draftLegs[i].excludeFromStats = get('exclude').checked;
+  });
+  const validLegs = draftLegs.filter(isValidLeg).map(l=>({
+    label: l.label||'',
+    durationSec: l.durationSec,
+    speedKmh: l.speedKmh||0,
+    distanceKm: l.distanceKm||0,
+    repeatCount: l.repeatCount||1,
+    isWork: !!l.isWork,
+    excludeFromStats: !!l.excludeFromStats
+  }));
+  if(!validLegs.length){ toast('Add at least one leg with duration and speed or distance'); return; }
+  if(!workoutName){ toast('Enter a workout name so you can compare this session later'); return; }
+  const totals = legsTotals(validLegs);
+  const runs = store.runs;
+  runs.push({
+    id: uid(), date, type: 'Interval', notes, workoutName,
+    legs: validLegs, distanceKm: totals.distanceKm, durationSec: totals.durationSec
+  });
+  store.runs = runs;
+  resetIntervalForm();
+  toast('Interval run saved');
+  renderRunTab();
+};
+
 document.getElementById('runDate').value = todayISO();
+document.getElementById('ivDate').value = todayISO();
 document.getElementById('runAddBtn').onclick = ()=>{
   const date = document.getElementById('runDate').value || todayISO();
   const distanceKm = parseFloat(document.getElementById('runDistance').value);
@@ -951,6 +1207,60 @@ document.getElementById('runAddBtn').onclick = ()=>{
   toast('Run logged');
   renderRunTab();
 };
+
+function speedTrendSVG(sessions, w=640, h=120){
+  if(sessions.length < 2) return `<div class="empty">Log this workout at least twice to see a trend.</div>`;
+  const speeds = sessions.map(s=> intervalSummary(s).avgWorkSpeed || 0);
+  const min = Math.min(...speeds), max = Math.max(...speeds);
+  const range = (max-min) || 1;
+  const pad = 16;
+  const stepX = (w - pad*2) / (sessions.length-1);
+  const coords = speeds.map((v,i)=>{
+    const x = pad + i*stepX;
+    const y = h - pad - ((v-min)/range) * (h-pad*2); // faster (higher km/h) higher on chart
+    return [x,y];
+  });
+  const path = coords.map((c,i)=> (i===0?'M':'L')+c[0].toFixed(1)+','+c[1].toFixed(1)).join(' ');
+  const dots = coords.map((c,i)=>`<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="3.5" fill="#c9a227"><title>${sessions[i].date}: ${(speeds[i]||0).toFixed(1)} km/h</title></circle>`).join('');
+  return `<svg viewBox="0 0 ${w} ${h}" width="100%" height="${h}">
+    <path d="${path}" fill="none" stroke="#c9a227" stroke-width="2"/>
+    ${dots}
+  </svg><div class="card-sub" style="margin-top:4px;">Higher on the chart = faster work speed</div>`;
+}
+
+function renderIntervalComparison(){
+  const names = [...new Set(store.runs.filter(r=> Array.isArray(r.legs) && r.workoutName).map(r=> r.workoutName))].sort();
+  const sel = document.getElementById('intervalWorkoutSelect');
+  const prev = sel.value;
+  if(!names.length){
+    sel.innerHTML = `<option value="">No interval workouts yet</option>`;
+    document.getElementById('intervalCompareChart').innerHTML = `<div class="empty">Save an interval run with a workout name to track it here.</div>`;
+    document.getElementById('intervalCompareTable').innerHTML = '';
+    return;
+  }
+  sel.innerHTML = names.map(n=>`<option value="${n}">${n}</option>`).join('');
+  if(prev && names.includes(prev)) sel.value = prev;
+  const name = sel.value;
+  const sessions = store.runs
+    .filter(r=> Array.isArray(r.legs) && r.workoutName===name)
+    .sort((a,b)=> new Date(a.date)-new Date(b.date));
+  document.getElementById('intervalCompareChart').innerHTML = speedTrendSVG(sessions);
+  const rows = [...sessions].reverse().map(r=>{
+    const s = intervalSummary(r);
+    return `<tr>
+      <td>${r.date}</td>
+      <td>${s.totalRounds||'—'}</td>
+      <td>${s.avgWorkSpeed!=null ? s.avgWorkSpeed.toFixed(1) : '—'}</td>
+      <td>${s.avgRestSpeed!=null ? s.avgRestSpeed.toFixed(1) : '—'}</td>
+    </tr>`;
+  }).join('');
+  document.getElementById('intervalCompareTable').innerHTML = `
+    <table>
+      <thead><tr><th>Date</th><th>Rounds</th><th>Work km/h</th><th>Rest km/h</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>`;
+}
+document.getElementById('intervalWorkoutSelect').onchange = renderIntervalComparison;
 
 function renderRunTab(){
   const runs = [...store.runs].sort((a,b)=> new Date(a.date)-new Date(b.date));
@@ -969,16 +1279,26 @@ function renderRunTab(){
   `;
   document.getElementById('runMileageChart').innerHTML = mileageBarsHTML();
   document.getElementById('runPaceChart').innerHTML = paceTrendSVG(runs);
+  refreshWorkoutNameDatalist();
+  renderIntervalComparison();
+
   document.getElementById('runList').innerHTML = runs.length ? [...runs].reverse().slice(0,25).map(r=>{
     const pace = paceSecPerKm(r);
+    let extra = '';
+    if(Array.isArray(r.legs)){
+      const s = intervalSummary(r);
+      const work = s.avgWorkSpeed!=null ? s.avgWorkSpeed.toFixed(1) : '—';
+      const rest = s.avgRestSpeed!=null ? s.avgRestSpeed.toFixed(1) : '—';
+      extra = `<div class="card-sub" style="margin-top:4px;color:var(--gold);">${r.workoutName||'Interval'} — ${s.totalRounds} rounds, work avg ${work} km/h / rest avg ${rest} km/h</div>`;
+    }
     return `
       <div class="card"><div class="card-head">
-        <div class="card-title">${r.distanceKm}km · ${formatPace(pace)} · ${formatKmh(pace)}</div>
+        <div class="card-title">${(+r.distanceKm).toFixed(2)}km · ${formatPace(pace)} · ${formatKmh(pace)}</div>
         <div style="display:flex;align-items:center;gap:10px;">
           <span class="edit-run-btn" data-id="${r.id}" style="font-size:12px;color:var(--track);cursor:pointer;">Edit</span>
           <span class="del-row del-run-btn" data-id="${r.id}" style="font-size:15px">&times;</span>
         </div>
-      </div><div class="card-sub">${r.date} · ${r.type}${r.notes?' · '+r.notes:''}</div></div>
+      </div><div class="card-sub">${r.date} · ${r.type}${r.notes?' · '+r.notes:''}</div>${extra}</div>
     `;
   }).join('') : `<div class="empty">No runs logged yet.</div>`;
 
@@ -989,14 +1309,34 @@ function renderRunTab(){
   document.querySelectorAll('.edit-run-btn').forEach(b=> b.addEventListener('click', e=>{
     const r = store.runs.find(x=> x.id === e.target.dataset.id);
     if(!r) return;
-    document.getElementById('runDate').value = r.date;
-    document.getElementById('runDistance').value = r.distanceKm;
-    document.getElementById('runDuration').value = formatDurationInput(r.durationSec);
-    document.getElementById('runType').value = r.type;
-    document.getElementById('runNotes').value = r.notes || '';
     store.runs = store.runs.filter(x=> x.id !== r.id);
+    if(Array.isArray(r.legs)){
+      setRunMode('intervals');
+      document.getElementById('ivDate').value = r.date;
+      document.getElementById('ivWorkoutName').value = r.workoutName || '';
+      document.getElementById('ivNotes').value = r.notes || '';
+      draftLegs = r.legs.map(l=>({
+        label: l.label||'',
+        durationSec: l.durationSec||0,
+        speedKmh: l.speedKmh||0,
+        distanceKm: l.distanceKm||0,
+        repeatCount: l.repeatCount||1,
+        isWork: !!l.isWork,
+        excludeFromStats: !!l.excludeFromStats
+      }));
+      renderLegBuilder();
+      toast('Loaded for editing — Save Interval Run to keep changes');
+    } else {
+      setRunMode('simple');
+      document.getElementById('runDate').value = r.date;
+      document.getElementById('runDistance').value = r.distanceKm;
+      document.getElementById('runDuration').value = formatDurationInput(r.durationSec);
+      document.getElementById('runType').value = r.type;
+      document.getElementById('runNotes').value = r.notes || '';
+      toast('Loaded for editing — Add Run to save changes');
+    }
     renderRunTab();
-    toast('Loaded for editing — Add Run to save changes');
+    window.scrollTo(0,0);
   }));
 }
 
