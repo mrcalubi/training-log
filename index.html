@@ -546,6 +546,29 @@ document.getElementById('parseBtn').onclick = ()=>{
 document.getElementById('logType').addEventListener('change', renderReferenceCard);
 
 /* ---------- inline autocomplete for exercise names ---------- */
+function recentBestForExercise(rawName, locationDependent, location, windowDays=14){
+  const name = canonicalName(rawName);
+  const key = locationDependent ? `${name} @ ${location||'Unspecified'}` : name;
+  const all = bestSetsByExercise()[key] || [];
+  const recent = all.filter(s=> daysAgo(s.date) <= windowDays);
+  if(!recent.length) return null;
+  const metric = s => s.est1rm!=null ? s.est1rm : s.weight;
+  let best = recent[0];
+  recent.forEach(s=>{ if(metric(s) > metric(best)) best = s; });
+  // pull EVERY set logged for this exercise on that same best day, not just the one best set
+  const sameDaySets = recent.filter(s=> s.date === best.date);
+  return { date: best.date, sets: sameDaySets };
+}
+function formatSetsSummary(sets, locationDependent){
+  // group consecutive equal-weight sets together, comma-join their reps — same grouping style used elsewhere (e.g. the shorthand serializer)
+  const groups = [];
+  sets.forEach(s=>{
+    const last = groups[groups.length-1];
+    if(last && last.weight===s.weight && last.perSide===s.perSide){ last.reps.push(s.reps); }
+    else groups.push({ weight:s.weight, perSide:s.perSide, reps:[s.reps] });
+  });
+  return groups.map(g=> `${g.weight}${g.perSide?'/side':''}${locationDependent?'':'kg'} x ${g.reps.join(',')}`).join(' + ');
+}
 document.getElementById('logInput').addEventListener('input', e=>{
   const ta = e.target;
   const pos = ta.selectionStart;
@@ -556,7 +579,15 @@ document.getElementById('logInput').addEventListener('input', e=>{
   const q = normalizeKey(linePrefix.trim());
   const matches = allExerciseNames().filter(n=> normalizeKey(n).includes(q)).slice(0,6);
   if(!matches.length){ dd.style.display='none'; return; }
-  dd.innerHTML = matches.map(m=>`<div class="ac-item" data-name="${m}">${m}</div>`).join('');
+  const location = document.getElementById('logLocation').value.trim() || 'Unspecified';
+  dd.innerHTML = matches.map(m=>{
+    const locDep = guessLocationDependent(m);
+    const best = recentBestForExercise(m, locDep, location);
+    const sub = best
+      ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">Best last 14d: ${formatSetsSummary(best.sets, locDep)} · ${best.date}</div>`
+      : '';
+    return `<div class="ac-item" data-name="${m}">${m}${sub}</div>`;
+  }).join('');
   dd.style.display = 'block';
   dd.querySelectorAll('.ac-item').forEach(item=>{
     item.addEventListener('mousedown', ev=>{ // mousedown fires before textarea blur, unlike click
@@ -953,17 +984,20 @@ function bestSetsByExercise(){
 }
 
 /* ---------- DASHBOARD ---------- */
+function activityCountInWindow(days){
+  const cutoff = days;
+  const gymCount = store.sessions.filter(s=> daysAgo(s.date) <= cutoff).length;
+  const runCount = store.runs.filter(r=> daysAgo(r.date) <= cutoff).length;
+  return gymCount + runCount;
+}
 function renderDashboard(){
   const sessions = store.sessions;
-  const now = Date.now();
-  const thisWeek = sessions.filter(s=> daysAgo(s.date) <= 7).length;
-  const totalSessions = sessions.length;
   const bw = store.bodyweight;
   const lastBw = bw.length ? bw[bw.length-1].weight : '—';
 
   document.getElementById('statRow').innerHTML = `
-    <div class="stat"><div class="stat-num" style="color:var(--gold)">${currentStreak()}</div><div class="stat-label">Day Streak</div></div>
-    <div class="stat"><div class="stat-num">${thisWeek}</div><div class="stat-label">This Week</div></div>
+    <div class="stat"><div class="stat-num">${activityCountInWindow(7)}</div><div class="stat-label">This Week</div></div>
+    <div class="stat"><div class="stat-num">${activityCountInWindow(30)}</div><div class="stat-label">This Month</div></div>
     <div class="stat"><div class="stat-num">${lastBw}</div><div class="stat-label">Last Weigh-in</div></div>
   `;
   renderHeatmap();
@@ -1901,21 +1935,9 @@ document.getElementById('workoutFinishBtn').onclick = ()=>{
   clearWorkoutDraft();
 };
 
-/* ---------- STREAK & HEATMAP ---------- */
+/* ---------- HEATMAP ---------- */
 function trainedDatesSet(){
   return new Set(store.sessions.map(s=> s.date));
-}
-function currentStreak(){
-  const dates = trainedDatesSet();
-  let d = new Date();
-  // if nothing logged today yet, start counting from yesterday so streak isn't punished mid-day
-  if(!dates.has(localDateStr(d))) d.setDate(d.getDate()-1);
-  let streak = 0;
-  while(dates.has(localDateStr(d))){
-    streak++;
-    d.setDate(d.getDate()-1);
-  }
-  return streak;
 }
 function renderHeatmap(){
   const dates = trainedDatesSet();
