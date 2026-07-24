@@ -1937,26 +1937,34 @@ document.getElementById('workoutFinishBtn').onclick = ()=>{
 
 /* ---------- HEATMAP ---------- */
 function trainedDatesSet(){
-  return new Set(store.sessions.map(s=> s.date));
+  const gymDates = store.sessions.map(s => s.date);
+  const runDates = store.runs.map(r => r.date);
+  return new Set([...gymDates, ...runDates]);
 }
 function renderHeatmap(){
   const dates = trainedDatesSet();
   const todayStr = todayISO();
   const weeks = 10;
-  const days = [];
-  const start = new Date();
-  start.setDate(start.getDate() - (weeks*7 - 1));
-  for(let i=0;i<weeks*7;i++){
-    const d = new Date(start); d.setDate(start.getDate()+i);
-    const ds = localDateStr(d);
-    days.push({ date: ds, on: dates.has(ds), today: ds===todayStr });
-  }
+  const today = new Date();
+  const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  // Monday-first columns (Mon top → Sun bottom), so the same weekday stays on one row.
+  // Sequential 7-day chunks (old behavior) made Mon/Wed/Fri patterns look diagonal.
+  const mondayOffset = (todayMid.getDay() + 6) % 7;
+  const startOfThisWeek = new Date(todayMid);
+  startOfThisWeek.setDate(todayMid.getDate() - mondayOffset);
+  const start = new Date(startOfThisWeek);
+  start.setDate(startOfThisWeek.getDate() - (weeks - 1) * 7);
+
   let html = '<div class="heatmap">';
   for(let w=0; w<weeks; w++){
     html += '<div class="heatmap-week">';
     for(let d=0; d<7; d++){
-      const cell = days[w*7+d];
-      if(cell) html += `<div class="heatmap-cell ${cell.on?'on':''} ${cell.today?'today':''}" title="${cell.date}"></div>`;
+      const cellDate = new Date(start);
+      cellDate.setDate(start.getDate() + w*7 + d);
+      const ds = localDateStr(cellDate);
+      const isFuture = cellDate > todayMid;
+      const on = !isFuture && dates.has(ds);
+      html += `<div class="heatmap-cell ${on?'on':''} ${ds===todayStr?'today':''}" title="${ds}"></div>`;
     }
     html += '</div>';
   }
