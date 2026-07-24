@@ -175,8 +175,8 @@
     <div class="section-title">Last 10 Weeks</div>
     <div id="heatmap"></div>
     <div id="monthlyCompare" class="card-sub" style="margin:-4px 0 14px;"></div>
-    <div class="section-title">Recent PRs <span style="font-weight:400">(90 days)</span></div>
-    <div id="recentPRs"></div>
+    <div class="section-title" id="recentPRsToggle">Recent PRs <span style="font-weight:400">(90 days)</span> <span id="recentPRsArrow">▸</span></div>
+    <div class="collapse-body" id="recentPRs" style="display:none;"></div>
     <div class="section-title" id="allTimeToggle">All-Time Bests <span id="allTimeArrow">▸</span></div>
     <div class="collapse-body" id="allTimePRs" style="display:none;"></div>
     <div class="section-title">Recent Sessions</div>
@@ -1064,6 +1064,14 @@ function renderDashboard(){
     btn.addEventListener('click', e=> startEditSession(e.target.dataset.id));
   });
 }
+
+document.getElementById('recentPRsToggle').onclick = ()=>{
+  const body = document.getElementById('recentPRs');
+  const arrow = document.getElementById('recentPRsArrow');
+  const open = body.style.display === 'block';
+  body.style.display = open ? 'none' : 'block';
+  arrow.textContent = open ? '▸' : '▾';
+};
 
 document.getElementById('allTimeToggle').onclick = ()=>{
   const body = document.getElementById('allTimePRs');
